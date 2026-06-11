@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main UI webview (the AtCoder browser webview gets no IPC)",
+  "windows": ["main"],
+  "webviews": ["ui"],
+  "permissions": [
+    "core:default",
+    "opener:default"
+  ]
+}

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AtCode</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <div id="app">
+      <header id="toolbar">
+        <span id="brand">AtCode</span>
+        <span class="sep"></span>
+        <button id="btn-compile" class="tbtn" data-icon="hammer" title="保存してコンパイル (Cmd/Ctrl+Enter)">コンパイル</button>
+        <button id="btn-run" class="tbtn" data-icon="play" title="ターミナルで実行">実行</button>
+        <button id="btn-diff" class="tbtn" data-icon="history" title="コンパイル時のスナップショットとのdiff">履歴Diff</button>
+        <button id="btn-split" class="tbtn icon-only" data-icon="split" title="エディタを右に分割"></button>
+        <span class="spacer"></span>
+        <select id="lang-select" title="ファイル生成に使う言語">
+          <option value="cpp">C++</option>
+          <option value="py">Python</option>
+        </select>
+        <button id="btn-term" class="tbtn icon-only" data-icon="terminal" title="ターミナルの表示/非表示"></button>
+      </header>
+
+      <div id="workbench">
+        <nav id="activitybar">
+          <button class="act active" data-view="explorer" data-icon="files" data-icon-size="24" title="エクスプローラー"></button>
+          <button class="act" data-view="search" data-icon="search" data-icon-size="24" title="検索"></button>
+          <span class="spacer"></span>
+          <button class="act" data-action="env" data-icon="wrench" data-icon-size="24" title="環境構築"></button>
+          <button class="act" data-action="settings" data-icon="settings" data-icon-size="24" title="設定"></button>
+        </nav>
+
+        <aside id="sidebar">
+          <div class="sidebar-view" data-view="explorer">
+            <div class="sidebar-header">
+              <span id="sidebar-title">エクスプローラー</span>
+              <button id="tree-refresh" class="mini" data-icon="refresh" data-icon-size="14" title="更新"></button>
+            </div>
+            <div class="search-box hidden" id="search-box">
+              <span data-icon="search" data-icon-size="14"></span>
+              <input id="search-input" type="text" placeholder="ファイル名で絞り込み" />
+            </div>
+            <div id="file-tree"></div>
+          </div>
+        </aside>
+
+        <div id="sidebar-resizer"></div>
+
+        <main id="editor-region">
+          <div id="editor-stack">
+            <div id="editor-groups"></div>
+            <div id="editor-empty">
+              <p>右の AtCoder ページで問題を開き、上部の<br /><b>「生成」</b>を押すと <code>ABC423_A.cpp</code> のような<br />ファイルが作られてここに開きます。</p>
+              <p class="dim">コンパイル: Cmd/Ctrl+Enter ・ 保存: Cmd/Ctrl+S</p>
+              <p class="dim">左のエクスプローラーから既存ファイルも開けます。</p>
+            </div>
+          </div>
+          <div id="term-resizer" class="hidden"></div>
+          <div id="bottom-panel" class="hidden">
+            <div id="bottom-tabs">
+              <button data-tab="term" class="active">ターミナル</button>
+              <button data-tab="output">出力</button>
+              <span class="spacer"></span>
+              <button id="btn-panel-close" class="mini" data-icon="close" data-icon-size="14" title="閉じる"></button>
+            </div>
+            <div id="term" class="bottom-view"></div>
+            <pre id="output" class="bottom-view hidden"></pre>
+          </div>
+        </main>
+
+        <div id="vsplit"></div>
+
+        <section id="right">
+          <div id="browser-bar">
+            <button id="nav-back" class="nbtn" data-icon="arrow-left" data-icon-size="16" title="戻る"></button>
+            <button id="nav-fwd" class="nbtn" data-icon="arrow-right" data-icon-size="16" title="進む"></button>
+            <button id="nav-reload" class="nbtn" data-icon="refresh" data-icon-size="16" title="再読み込み"></button>
+            <button class="quick" data-url="https://atcoder.jp/home?lang=ja">Top</button>
+            <button class="quick" data-url="https://atcoder.jp/contests/?lang=ja">Contests</button>
+            <button class="quick" data-url="https://kenkoooo.com/atcoder/">Problems</button>
+            <span id="url-display" title=""></span>
+            <button id="btn-gen" class="accent" data-icon="file-code" data-icon-size="15" disabled>生成</button>
+          </div>
+          <div id="browser-view">
+            <div class="browser-placeholder">AtCoder を読み込み中…</div>
+          </div>
+        </section>
+      </div>
+
+      <footer id="status">
+        <span id="status-file">ファイルなし</span>
+        <span id="status-msg"></span>
+        <span class="spacer"></span>
+        <span id="status-ws"></span>
+      </footer>
+    </div>
+
+    <div id="modal-backdrop" class="hidden">
+      <div id="modal">
+        <div id="modal-head">
+          <span id="modal-title"></span>
+          <button id="modal-close" class="mini" data-icon="close" data-icon-size="16"></button>
+        </div>
+        <div id="modal-body"></div>
+      </div>
+    </div>
+    <div id="toast" class="hidden"></div>
+  </body>
+</html>
