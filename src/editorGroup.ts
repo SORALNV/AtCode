@@ -6,6 +6,9 @@ import { icon, fileIconName } from "./icons";
   getWorker: () => new editorWorker(),
 };
 
+/** Pseudo-path of the singleton AtCoder browser tab. */
+export const BROWSER_TAB = "atcode://browser";
+
 export interface OpenDoc {
   path: string;
   name: string;
@@ -26,11 +29,13 @@ const DRAG_MIME = "text/atcode-path";
 /**
  * One tabbed editor view. Several groups can coexist side by side; they share
  * the document models held by {@link GroupManager}, so edits sync everywhere
- * a file is open (just like VSCode editor groups).
+ * a file is open. A tab is either a file path or {@link BROWSER_TAB} — the
+ * latter shows the (singleton) AtCoder browser panel instead of Monaco.
  */
 class EditorGroup {
   readonly el = document.createElement("div");
   readonly tabbar = document.createElement("div");
+  readonly body = document.createElement("div");
   readonly editorEl = document.createElement("div");
   readonly editor: monaco.editor.IStandaloneCodeEditor;
   tabs: string[] = [];
@@ -39,8 +44,10 @@ class EditorGroup {
   constructor(private mgr: GroupManager) {
     this.el.className = "editor-group";
     this.tabbar.className = "egroup-tabs";
+    this.body.className = "egroup-body";
     this.editorEl.className = "egroup-editor";
-    this.el.append(this.tabbar, this.editorEl);
+    this.body.append(this.editorEl);
+    this.el.append(this.tabbar, this.body);
 
     this.editor = monaco.editor.create(this.editorEl, {
       model: null,
@@ -51,6 +58,7 @@ class EditorGroup {
       scrollBeyondLastLine: false,
       padding: { top: 8 },
     });
+    if (mgr.editorOpts) this.editor.updateOptions(mgr.editorOpts);
     this.editor.onDidFocusEditorText(() => this.mgr.setActiveGroup(this));
     this.editor.addAction({
       id: "atcode.save",
@@ -85,7 +93,9 @@ class EditorGroup {
   }
 
   activeDoc(): OpenDoc | null {
-    return this.active ? this.mgr.docs.get(this.active) ?? null : null;
+    return this.active && this.active !== BROWSER_TAB
+      ? this.mgr.docs.get(this.active) ?? null
+      : null;
   }
 
   has(path: string): boolean {
@@ -98,16 +108,20 @@ class EditorGroup {
   }
 
   activate(path: string): void {
-    const doc = this.mgr.docs.get(path);
-    if (!doc) return;
+    if (path !== BROWSER_TAB && !this.mgr.docs.has(path)) return;
     this.active = path;
-    this.editor.setModel(doc.model);
+    if (path !== BROWSER_TAB) {
+      this.editor.setModel(this.mgr.docs.get(path)!.model);
+    }
     this.renderTabs();
     this.mgr.setActiveGroup(this);
+    this.mgr.updateBrowserPanel();
+    this.mgr.onLayoutChange?.();
   }
 
   setModelForActive(): void {
-    this.editor.setModel(this.active ? this.mgr.docs.get(this.active)!.model : null);
+    const doc = this.activeDoc();
+    this.editor.setModel(doc ? doc.model : null);
   }
 
   close(path: string): void {
@@ -134,14 +148,18 @@ class EditorGroup {
   renderTabs(): void {
     this.tabbar.replaceChildren(
       ...this.tabs.map((path) => {
-        const doc = this.mgr.docs.get(path)!;
+        const isBrowser = path === BROWSER_TAB;
+        const doc = isBrowser ? null : this.mgr.docs.get(path);
+        const name = isBrowser ? "AtCoder" : doc?.name ?? path;
         const tab = document.createElement("div");
         tab.className =
-          "etab" + (path === this.active ? " active" : "") + (doc.dirty ? " dirty" : "");
+          "etab" +
+          (path === this.active ? " active" : "") +
+          (doc?.dirty ? " dirty" : "");
         tab.draggable = true;
         tab.innerHTML =
-          `<span class="etab-icon">${icon(fileIconName(doc.name), 15)}</span>` +
-          `<span class="etab-name">${doc.name}</span>`;
+          `<span class="etab-icon">${icon(isBrowser ? "globe" : fileIconName(name), 15)}</span>` +
+          `<span class="etab-name">${name}</span>`;
 
         const close = document.createElement("button");
         close.className = "etab-close";
@@ -170,23 +188,32 @@ export class GroupManager {
   readonly docs = new Map<string, OpenDoc>();
   groups: EditorGroup[] = [];
   active!: EditorGroup;
+  editorOpts: monaco.editor.IEditorOptions | null = null;
+  /** Whether the AtCoder tab is currently the visible tab of its group. */
+  browserShown = false;
 
   onSave?: (doc: OpenDoc) => void;
   onCompile?: () => void;
   onActiveChange?: (doc: OpenDoc | null) => void;
   onDragStart?: () => void;
   onDragEnd?: () => void;
+  /** Fired whenever the browser tab's visibility (or layout slot) changes. */
+  onBrowserVisible?: (visible: boolean) => void;
+  /** Fired after any tab open/close/move/activate — used to persist layout. */
+  onLayoutChange?: () => void;
 
   constructor(
     private container: HTMLElement,
     private emptyEl: HTMLElement,
+    private browserPanel: HTMLElement,
   ) {
     this.addGroup();
   }
 
-  private addGroup(): EditorGroup {
+  private addGroup(index?: number): EditorGroup {
     const g = new EditorGroup(this);
-    this.groups.push(g);
+    if (index !== undefined) this.groups.splice(index, 0, g);
+    else this.groups.push(g);
     this.active = g;
     this.relayout();
     return g;
@@ -227,13 +254,44 @@ export class GroupManager {
     return doc;
   }
 
-  /** Open a file in the active group (creating its model if needed). */
+  /**
+   * Open a file. If the active group is currently showing the browser tab,
+   * the file goes to another group (created on the left when necessary), so
+   * the AtCoder page stays visible — the VSCode-like default.
+   */
   openFile(path: string, name: string, content: string): void {
     this.ensureDoc(path, name, content);
-    this.active.open(path);
-    this.emptyEl.classList.add("hidden");
-    this.onActiveChange?.(this.active.activeDoc());
-    this.active.editor.focus();
+    let target = this.active;
+    if (target.active === BROWSER_TAB) {
+      target = this.groups.find((g) => g !== target) ?? this.addGroup(0);
+    }
+    target.open(path);
+    this.updateEmpty();
+    target.editor.focus();
+  }
+
+  /** Open (or focus) the AtCoder browser tab in the active group. */
+  openBrowser(): void {
+    const owner = this.groups.find((g) => g.has(BROWSER_TAB));
+    if (owner) owner.activate(BROWSER_TAB);
+    else this.active.open(BROWSER_TAB);
+    this.updateEmpty();
+  }
+
+  /**
+   * Reparent the singleton browser panel into whichever group owns the tab
+   * and sync the native webview's visibility with the tab's.
+   */
+  updateBrowserPanel(): void {
+    const owner = this.groups.find((g) => g.has(BROWSER_TAB));
+    const visible = !!owner && owner.active === BROWSER_TAB;
+    if (owner && this.browserPanel.parentElement !== owner.body) {
+      owner.body.append(this.browserPanel);
+    }
+    this.browserPanel.classList.toggle("hidden", !visible);
+    this.browserShown = visible;
+    this.updateEmpty();
+    this.onBrowserVisible?.(visible);
   }
 
   markSaved(doc: OpenDoc): void {
@@ -273,16 +331,65 @@ export class GroupManager {
     toGroup.tabs.splice(index, 0, path);
     toGroup.activate(path);
     this.collapseEmpty();
+    this.updateBrowserPanel();
   }
 
   afterClose(path: string): void {
-    if (!this.groups.some((g) => g.has(path))) {
+    if (path !== BROWSER_TAB && !this.groups.some((g) => g.has(path))) {
       this.docs.get(path)?.model.dispose();
       this.docs.delete(path);
     }
     this.collapseEmpty();
-    if (this.docs.size === 0) this.emptyEl.classList.remove("hidden");
+    this.updateBrowserPanel();
     this.onActiveChange?.(this.active.activeDoc());
+    this.onLayoutChange?.();
+  }
+
+  /** Snapshot of the tab layout, for session restore. */
+  serialize(): { tabs: string[]; active: string | null }[] {
+    return this.groups.map((g) => ({ tabs: [...g.tabs], active: g.active }));
+  }
+
+  /**
+   * Rebuild groups/tabs from a {@link serialize} snapshot. `load` returns a
+   * file's content or null to skip it (e.g. the file was deleted).
+   * Returns false when nothing could be restored.
+   */
+  async restore(
+    saved: { tabs: string[]; active: string | null }[] | null,
+    load: (path: string) => Promise<string | null>,
+  ): Promise<boolean> {
+    if (!saved?.length) return false;
+    let any = false;
+    for (let i = 0; i < saved.length && i < 2; i++) {
+      const g = i === 0 ? this.groups[0] : this.addGroup();
+      for (const tab of saved[i].tabs) {
+        if (tab === BROWSER_TAB) {
+          g.tabs.push(BROWSER_TAB);
+          any = true;
+          continue;
+        }
+        const content = await load(tab);
+        if (content === null) continue;
+        const name = tab.split(/[\\/]/).pop() ?? tab;
+        this.ensureDoc(tab, name, content);
+        g.tabs.push(tab);
+        any = true;
+      }
+      const active =
+        saved[i].active && g.tabs.includes(saved[i].active!)
+          ? saved[i].active!
+          : g.tabs[0] ?? null;
+      if (active) g.activate(active);
+    }
+    this.collapseEmpty();
+    this.updateBrowserPanel();
+    return any;
+  }
+
+  private updateEmpty(): void {
+    const hasContent = this.docs.size > 0 || this.groups.some((g) => g.has(BROWSER_TAB));
+    this.emptyEl.classList.toggle("hidden", hasContent);
   }
 
   private collapseEmpty(): void {
@@ -295,6 +402,12 @@ export class GroupManager {
       this.relayout();
     }
     this.updateFocusClass();
+    this.updateEmpty();
+  }
+
+  applyEditorOptions(opts: monaco.editor.IEditorOptions): void {
+    this.editorOpts = opts;
+    this.groups.forEach((g) => g.editor.updateOptions(opts));
   }
 
   private relayout(): void {

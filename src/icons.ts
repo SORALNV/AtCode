@@ -21,6 +21,9 @@ const PATHS: Record<string, string> = {
   terminal:
     '<path d="m7 11 2-2-2-2"/><path d="M11 15h4"/><rect width="18" height="18" x="3" y="3" rx="2"/>',
   // browser bar
+  globe:
+    '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+  swap: '<path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/>',
   'arrow-left': '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
   'arrow-right': '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
   refresh:

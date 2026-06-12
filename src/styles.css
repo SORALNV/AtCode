@@ -100,14 +100,16 @@ select {
 /* ---------- workbench grid ---------- */
 #workbench {
   display: grid;
-  grid-template-columns: 48px var(--sidebar-w) 5px minmax(320px, 1fr) 6px var(--browser-w, minmax(360px, 0.92fr));
+  grid-template-columns: 48px var(--sidebar-w) 5px minmax(0, 1fr);
   min-height: 0;
 }
 #workbench.sidebar-collapsed {
-  grid-template-columns: 48px 0 0 minmax(320px, 1fr) 6px var(--browser-w, minmax(360px, 0.92fr));
+  grid-template-columns: 48px 0 0 minmax(0, 1fr);
 }
+/* visibility (not display:none): collapsed panes must stay in the grid flow,
+   otherwise the remaining items shift into the wrong columns. */
 #workbench.sidebar-collapsed #sidebar,
-#workbench.sidebar-collapsed #sidebar-resizer { display: none; }
+#workbench.sidebar-collapsed #sidebar-resizer { visibility: hidden; }
 
 /* ---------- activity bar ---------- */
 #activitybar {
@@ -224,6 +226,7 @@ select {
 .egroup-resizer { width: 6px; cursor: col-resize; background: var(--border); flex: none; }
 .egroup-resizer:hover { background: var(--accent-line); }
 .editor-group.focused .egroup-tabs { box-shadow: inset 0 -1px 0 var(--accent-line); }
+.egroup-body { flex: 1; min-height: 0; position: relative; }
 
 .egroup-tabs {
   display: flex;
@@ -234,7 +237,7 @@ select {
   flex: none;
 }
 .egroup-tabs.drop { background: #2d3a45; }
-.egroup-editor { flex: 1; min-height: 0; position: relative; }
+.egroup-editor { position: absolute; inset: 0; }
 
 .etab {
   display: flex;
@@ -344,23 +347,24 @@ select {
 #output .ok { color: var(--ok); }
 #output .err { color: var(--err); }
 
-/* ---------- right: browser ---------- */
-#vsplit { cursor: col-resize; background: var(--border); }
-#vsplit:hover { background: var(--accent-line); }
-#right {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
+/* ---------- browser tab panel (reparented into an editor group) ---------- */
+.browser-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background: var(--bg);
 }
 #browser-bar {
   display: flex;
   align-items: center;
   gap: 4px;
+  position: absolute;
+  top: 0; left: 0; right: 0;
   height: 38px;
   padding: 0 8px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
-  flex: none;
+  z-index: 1;
 }
 #browser-bar .nbtn { padding: 4px; color: var(--fg-dim); }
 #browser-bar .nbtn:hover { color: var(--fg); }
@@ -378,7 +382,11 @@ select {
   font-size: 11.5px;
   color: var(--fg-dim);
 }
-#browser-view { flex: 1; position: relative; background: #2b2b2b; }
+#browser-view {
+  position: absolute;
+  top: 38px; left: 0; right: 0; bottom: 0;
+  background: #2b2b2b;
+}
 .browser-placeholder {
   position: absolute;
   inset: 0;
@@ -448,6 +456,42 @@ select {
   white-space: nowrap;
 }
 .env-item .note { color: var(--fg-dim); font-size: 11px; margin-top: 6px; }
+
+/* settings modal */
+.settings-form { display: flex; flex-direction: column; gap: 12px; }
+.settings-form fieldset {
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 0;
+}
+.settings-form legend { font-size: 12px; color: var(--fg-dim); padding: 0 5px; }
+.settings-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+.settings-row label { width: 180px; flex: none; font-size: 12.5px; }
+.settings-row input[type="number"],
+.settings-row input[type="text"],
+.settings-row select {
+  background: var(--bg-input);
+  color: var(--fg);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12.5px;
+}
+.settings-row input[type="text"] { flex: 1; }
+.settings-form textarea {
+  width: 100%;
+  min-height: 110px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 8px;
+  resize: vertical;
+}
+.settings-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
 
 .diff-wrap { display: flex; gap: 10px; flex: 1; min-height: 0; }
 .diff-list { width: 210px; flex: none; overflow-y: auto; border-right: 1px solid var(--border-strong); padding-right: 8px; }

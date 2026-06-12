@@ -15,6 +15,7 @@ pub fn run() {
         .manage(pty::PtyState::default())
         .invoke_handler(tauri::generate_handler![
             browser::set_browser_bounds,
+            browser::get_browser_bounds,
             browser::set_browser_visible,
             browser::browser_navigate,
             browser::browser_back,
@@ -44,23 +45,37 @@ pub fn run() {
                 .min_inner_size(1000.0, 620.0)
                 .build()?;
 
+            // Keep the window inside the monitor (a partially off-screen
+            // window shows up as the app being cut off at the screen edge).
+            if let Ok(Some(monitor)) = window.current_monitor() {
+                let scale = monitor.scale_factor();
+                let screen = monitor.size().to_logical::<f64>(scale);
+                let w = 1440.0_f64.min(screen.width * 0.94);
+                let h = 900.0_f64.min(screen.height * 0.88);
+                let _ = window.set_size(tauri::LogicalSize::new(w, h));
+                let _ = window.center();
+            }
+
             // Main UI webview: fills the window, hosts editor / terminal / toolbar.
             let ui = tauri::webview::WebviewBuilder::new("ui", WebviewUrl::App(Default::default()))
-                .auto_resize();
+                .auto_resize()
+                .devtools(false);
             window.add_child(
                 ui,
                 LogicalPosition::new(0.0, 0.0),
                 LogicalSize::new(1440.0, 900.0),
             )?;
 
-            // Browser webview: native view layered above the UI webview. The
-            // frontend reports the rect of its placeholder pane and we move
-            // this view to match. Navigation is restricted to AtCoder domains.
+            // Browser webview: native view layered above the UI webview. It is
+            // shown only while the frontend's "AtCoder" tab is visible; the
+            // frontend reports the tab pane's rect and we move this view to
+            // match. Navigation is restricted to AtCoder domains.
             let nav_handle = app.handle().clone();
             let browser = tauri::webview::WebviewBuilder::new(
                 "browser",
                 WebviewUrl::External(INITIAL_URL.parse().unwrap()),
             )
+            .devtools(false)
             .on_navigation(move |url| {
                 let allowed = browser::is_allowed_url(url);
                 if !allowed {
@@ -73,11 +88,13 @@ pub fn run() {
                     let _ = webview.emit("browser:nav", payload.url().to_string());
                 }
             });
-            window.add_child(
+            let browser_wv = window.add_child(
                 browser,
                 LogicalPosition::new(760.0, 76.0),
                 LogicalSize::new(680.0, 790.0),
             )?;
+            // Hidden until the frontend places the AtCoder tab.
+            browser_wv.hide()?;
 
             Ok(())
         })

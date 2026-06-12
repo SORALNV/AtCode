@@ -33,10 +33,33 @@ pub fn set_browser_bounds(
     height: f64,
 ) -> Result<(), String> {
     let wv = browser(&app)?;
-    wv.set_position(LogicalPosition::new(x, y)).map_err(e2s)?;
-    wv.set_size(LogicalSize::new(width.max(1.0), height.max(1.0)))
-        .map_err(e2s)?;
-    Ok(())
+    // Clamp to the window's inner area: a webview that pokes past the window
+    // edge shows up as clipped page content.
+    let win = wv.window();
+    let scale = win.scale_factor().map_err(e2s)?;
+    let inner = win.inner_size().map_err(e2s)?.to_logical::<f64>(scale);
+    let x = x.clamp(0.0, (inner.width - 1.0).max(0.0));
+    let y = y.clamp(0.0, (inner.height - 1.0).max(0.0));
+    let width = width.max(1.0).min(inner.width - x);
+    let height = height.max(1.0).min(inner.height - y);
+    // Atomic position+size update; setting them separately could leave the
+    // webview half-updated (seen as a dark gap under the page).
+    wv.set_bounds(tauri::Rect {
+        position: LogicalPosition::new(x, y).into(),
+        size: LogicalSize::new(width, height).into(),
+    })
+    .map_err(e2s)
+}
+
+/// Actual bounds as the OS reports them (logical px), so the frontend can
+/// detect drift and re-apply.
+#[tauri::command]
+pub fn get_browser_bounds(app: AppHandle) -> Result<(f64, f64, f64, f64), String> {
+    let wv = browser(&app)?;
+    let scale = wv.window().scale_factor().map_err(e2s)?;
+    let pos = wv.position().map_err(e2s)?.to_logical::<f64>(scale);
+    let size = wv.size().map_err(e2s)?.to_logical::<f64>(scale);
+    Ok((pos.x, pos.y, size.width, size.height))
 }
 
 #[tauri::command]

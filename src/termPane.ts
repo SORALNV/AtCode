@@ -8,14 +8,23 @@ export class TermPane {
   private term: Terminal | null = null;
   private fit = new FitAddon();
   private started = false;
+  private fontSize = 13;
 
   constructor(private el: HTMLElement) {}
+
+  setFontSize(size: number) {
+    this.fontSize = size;
+    if (this.term) {
+      this.term.options.fontSize = size;
+      this.refit();
+    }
+  }
 
   /** Create xterm on first use and (re)start the PTY if needed. */
   async ensure() {
     if (!this.term) {
       this.term = new Terminal({
-        fontSize: 13,
+        fontSize: this.fontSize,
         fontFamily: "Menlo, Consolas, monospace",
         cursorBlink: true,
         theme: { background: "#1e1e1e" },

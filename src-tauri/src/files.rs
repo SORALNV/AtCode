@@ -90,20 +90,29 @@ fn problem_name_from_url(url: &str) -> Option<String> {
 }
 
 #[tauri::command]
-pub fn create_problem_file(url: String, lang: String) -> Result<CreatedFile, String> {
+pub fn create_problem_file(
+    url: String,
+    lang: String,
+    template: Option<String>,
+) -> Result<CreatedFile, String> {
     let name = problem_name_from_url(&url).ok_or(
         "コンテスト/問題ページのURLではありません。AtCoderの問題ページを開いてから押してください。",
     )?;
-    let (ext, template, comment) = match lang.as_str() {
+    let (ext, default_template, comment) = match lang.as_str() {
         "py" => ("py", PY_TEMPLATE, "#"),
         _ => ("cpp", CPP_TEMPLATE, "//"),
     };
     let file_name = format!("{name}.{ext}");
     let path = workspace_path().join(&file_name);
 
+    // A custom template from the settings screen takes precedence.
+    let template_body = template
+        .filter(|t| !t.trim().is_empty())
+        .unwrap_or_else(|| default_template.to_string());
+
     let created = !path.exists();
     let content = if created {
-        let body = format!("{comment} {url}\n{template}");
+        let body = format!("{comment} {url}\n{template_body}");
         fs::write(&path, &body).map_err(|e| e.to_string())?;
         body
     } else {

@@ -18,6 +18,11 @@
         <button id="btn-diff" class="tbtn" data-icon="history" title="コンパイル時のスナップショットとのdiff">履歴Diff</button>
         <button id="btn-split" class="tbtn icon-only" data-icon="split" title="エディタを右に分割"></button>
         <span class="spacer"></span>
+        <button id="btn-browser" class="tbtn icon-only" data-icon="globe" title="ブラウザタブを開く"></button>
+        <select id="site-select" title="表示するサイトの切り替え">
+          <option value="https://atcoder.jp/home?lang=ja">AtCoder</option>
+          <option value="https://kenkoooo.com/atcoder/">Problems</option>
+        </select>
         <select id="lang-select" title="ファイル生成に使う言語">
           <option value="cpp">C++</option>
           <option value="py">Python</option>
@@ -54,7 +59,7 @@
           <div id="editor-stack">
             <div id="editor-groups"></div>
             <div id="editor-empty">
-              <p>右の AtCoder ページで問題を開き、上部の<br /><b>「生成」</b>を押すと <code>ABC423_A.cpp</code> のような<br />ファイルが作られてここに開きます。</p>
+              <p>上の <b>AtCoder</b> ボタンでブラウザタブを開き、<br />問題ページで<b>「生成」</b>を押すと <code>ABC423_A.cpp</code> のような<br />ファイルが作られて開きます。</p>
               <p class="dim">コンパイル: Cmd/Ctrl+Enter ・ 保存: Cmd/Ctrl+S</p>
               <p class="dim">左のエクスプローラーから既存ファイルも開けます。</p>
             </div>
@@ -71,24 +76,6 @@
             <pre id="output" class="bottom-view hidden"></pre>
           </div>
         </main>
-
-        <div id="vsplit"></div>
-
-        <section id="right">
-          <div id="browser-bar">
-            <button id="nav-back" class="nbtn" data-icon="arrow-left" data-icon-size="16" title="戻る"></button>
-            <button id="nav-fwd" class="nbtn" data-icon="arrow-right" data-icon-size="16" title="進む"></button>
-            <button id="nav-reload" class="nbtn" data-icon="refresh" data-icon-size="16" title="再読み込み"></button>
-            <button class="quick" data-url="https://atcoder.jp/home?lang=ja">Top</button>
-            <button class="quick" data-url="https://atcoder.jp/contests/?lang=ja">Contests</button>
-            <button class="quick" data-url="https://kenkoooo.com/atcoder/">Problems</button>
-            <span id="url-display" title=""></span>
-            <button id="btn-gen" class="accent" data-icon="file-code" data-icon-size="15" disabled>生成</button>
-          </div>
-          <div id="browser-view">
-            <div class="browser-placeholder">AtCoder を読み込み中…</div>
-          </div>
-        </section>
       </div>
 
       <footer id="status">
@@ -97,6 +84,24 @@
         <span class="spacer"></span>
         <span id="status-ws"></span>
       </footer>
+    </div>
+
+    <!-- Singleton AtCoder browser panel; GroupManager reparents this into
+         whichever editor group owns the AtCoder tab. -->
+    <div id="browser-panel" class="browser-panel hidden">
+      <div id="browser-bar">
+        <button id="nav-back" class="nbtn" data-icon="arrow-left" data-icon-size="16" title="戻る"></button>
+        <button id="nav-fwd" class="nbtn" data-icon="arrow-right" data-icon-size="16" title="進む"></button>
+        <button id="nav-reload" class="nbtn" data-icon="refresh" data-icon-size="16" title="再読み込み"></button>
+        <button class="quick" data-url="https://atcoder.jp/home?lang=ja">Top</button>
+        <button class="quick" data-url="https://atcoder.jp/contests/?lang=ja">Contests</button>
+        <button class="quick" data-url="https://kenkoooo.com/atcoder/">Problems</button>
+        <span id="url-display" title=""></span>
+        <button id="btn-gen" class="accent" data-icon="file-code" data-icon-size="15" disabled>生成</button>
+      </div>
+      <div id="browser-view">
+        <div class="browser-placeholder">AtCoder を読み込み中…</div>
+      </div>
     </div>
 
     <div id="modal-backdrop" class="hidden">

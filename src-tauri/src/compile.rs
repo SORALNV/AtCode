@@ -106,7 +106,7 @@ pub fn find_python() -> Option<String> {
 }
 
 #[tauri::command]
-pub fn compile_file(path: String) -> Result<CompileResult, String> {
+pub fn compile_file(path: String, flags: Option<Vec<String>>) -> Result<CompileResult, String> {
     let file = PathBuf::from(&path);
     if !file.exists() {
         return Err(format!("ファイルが見つかりません: {path}"));
@@ -132,8 +132,17 @@ pub fn compile_file(path: String) -> Result<CompileResult, String> {
             } else {
                 stem.clone()
             });
+            // Settings may override the default flag set from the frontend.
+            let user_flags: Vec<String> = match flags {
+                Some(f) if !f.is_empty() => f,
+                _ => ["-std=gnu++20", "-O2", "-Wall", "-Wextra"]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+            };
             let out = Command::new(&compiler)
-                .args(["-std=gnu++20", "-O2", "-Wall", "-Wextra", "-o"])
+                .args(&user_flags)
+                .arg("-o")
                 .arg(&bin)
                 .arg(&file)
                 .output()

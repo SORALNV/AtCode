@@ -41,7 +41,6 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 hydrateIcons();
 
 const workbench = $("workbench");
-const splitEl = $("workbench");
 const browserView = $("browser-view");
 const urlDisplay = $("url-display");
 const genBtn = $<HTMLButtonElement>("btn-gen");
@@ -59,13 +58,60 @@ const modalTitle = $("modal-title");
 const modalBody = $("modal-body");
 const toastEl = $("toast");
 
-const groups = new GroupManager($("editor-groups"), $("editor-empty"));
+const groups = new GroupManager($("editor-groups"), $("editor-empty"), $("browser-panel"));
 const termPane = new TermPane(termEl);
 const tree = new FileTree($("file-tree"), openPath);
 
 let wsDir = "";
 let currentUrl = "";
 let lastRunCmd: string | null = null;
+
+/* ---------- settings ---------- */
+
+interface AppSettings {
+  editorFontSize: number;
+  minimap: boolean;
+  termFontSize: number;
+  cppStd: string;
+  cppOpt: string;
+  cppExtra: string;
+  cppTemplate: string;
+  pyTemplate: string;
+}
+
+const DEFAULT_SETTINGS: AppSettings = {
+  editorFontSize: 14,
+  minimap: false,
+  termFontSize: 13,
+  cppStd: "gnu++20",
+  cppOpt: "-O2",
+  cppExtra: "",
+  cppTemplate: "",
+  pyTemplate: "",
+};
+
+let settings: AppSettings = {
+  ...DEFAULT_SETTINGS,
+  ...JSON.parse(localStorage.getItem("atcode.settings") ?? "{}"),
+};
+
+function applySettings() {
+  groups.applyEditorOptions({
+    fontSize: settings.editorFontSize,
+    minimap: { enabled: settings.minimap },
+  });
+  termPane.setFontSize(settings.termFontSize);
+}
+
+function cppFlags(): string[] {
+  return [
+    `-std=${settings.cppStd}`,
+    ...settings.cppOpt.split(/\s+/).filter(Boolean),
+    "-Wall",
+    "-Wextra",
+    ...settings.cppExtra.split(/\s+/).filter(Boolean),
+  ];
+}
 
 /* ---------- helpers ---------- */
 
@@ -91,47 +137,62 @@ async function openPath(path: string, name: string) {
   }
 }
 
-/* ---------- browser webview bounds sync ---------- */
+/* ---------- native browser webview sync ---------- */
 
 function reportBounds() {
+  if (!groups.browserShown) return;
   const r = browserView.getBoundingClientRect();
-  invoke("set_browser_bounds", { x: r.x, y: r.y, width: r.width, height: r.height }).catch(() => {});
+  if (r.width < 2 || r.height < 2) return;
+  // floor origin, ceil extent — ensures the WebView covers the full element
+  // even when CSS pixels don't land on exact device pixel boundaries.
+  const x = Math.floor(r.x);
+  const y = Math.floor(r.y);
+  invoke("set_browser_bounds", {
+    x,
+    y,
+    width:  Math.ceil(r.right)  - x,
+    height: Math.ceil(r.bottom) - y,
+  }).catch(() => {});
 }
-new ResizeObserver(reportBounds).observe(browserView);
-window.addEventListener("resize", reportBounds);
-requestAnimationFrame(reportBounds);
 
-/* The native browser webview sits above this page and swallows mouse events,
-   so hide it during splitter / tab drags and restore afterwards. */
-function hideBrowser() {
+function syncBrowser(visible: boolean) {
+  if (visible) {
+    // Position first, then reveal — showing before the rect is fixed would
+    // flash the webview at its previous (stale) bounds.
+    reportBounds();
+    invoke("set_browser_visible", { visible: true }).catch(() => {});
+    requestAnimationFrame(reportBounds);
+  } else {
+    invoke("set_browser_visible", { visible: false }).catch(() => {});
+  }
+}
+
+groups.onBrowserVisible = syncBrowser;
+new ResizeObserver(() => requestAnimationFrame(reportBounds)).observe(browserView);
+window.addEventListener("resize", reportBounds);
+
+/* The native webview sits above this page and swallows mouse events, so hide
+   it during splitter / tab drags and restore afterwards. */
+function hideBrowserForDrag() {
   invoke("set_browser_visible", { visible: false }).catch(() => {});
 }
-function showBrowser() {
-  invoke("set_browser_visible", { visible: true }).catch(() => {});
-  reportBounds();
+function restoreBrowserAfterDrag() {
+  syncBrowser(groups.browserShown);
 }
-groups.onDragStart = hideBrowser;
-groups.onDragEnd = showBrowser;
+groups.onDragStart = hideBrowserForDrag;
+groups.onDragEnd = restoreBrowserAfterDrag;
 
 function startDrag(e: MouseEvent, onMove: (ev: MouseEvent) => void) {
   e.preventDefault();
-  hideBrowser();
+  hideBrowserForDrag();
   const up = () => {
     document.removeEventListener("mousemove", onMove);
     document.removeEventListener("mouseup", up);
-    showBrowser();
+    restoreBrowserAfterDrag();
   };
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", up);
 }
-
-$("vsplit").addEventListener("mousedown", (e) =>
-  startDrag(e, (ev) => {
-    const rect = splitEl.getBoundingClientRect();
-    const browserW = Math.min(Math.max(rect.right - ev.clientX, 360), rect.width - 460);
-    workbench.style.setProperty("--browser-w", `${browserW}px`);
-  }),
-);
 
 $("sidebar-resizer").addEventListener("mousedown", (e) =>
   startDrag(e, (ev) => {
@@ -147,10 +208,14 @@ termResizer.addEventListener("mousedown", (e) =>
   }),
 );
 
+// No native context menu (= no "Inspect Element"); Monaco and xterm bring
+// their own menus / shortcuts where needed.
+document.addEventListener("contextmenu", (e) => {
+  if (!(e.target as HTMLElement).closest(".xterm")) e.preventDefault();
+});
+
 /* ---------- activity bar ---------- */
 
-// The sidebar holds a single explorer; the "search" button just reveals an
-// inline filter box over the same tree.
 let activeView = "explorer";
 const searchBox = $("search-box");
 const sidebarTitle = $("sidebar-title");
@@ -158,8 +223,7 @@ const sidebarTitle = $("sidebar-title");
 document.querySelectorAll<HTMLButtonElement>("#activitybar .act").forEach((btn) => {
   btn.addEventListener("click", () => {
     if (btn.dataset.action === "env") return openEnv();
-    if (btn.dataset.action === "settings")
-      return toast("設定画面は今後追加予定です（テーマ・フォント・コンパイルオプション）");
+    if (btn.dataset.action === "settings") return openSettings();
     selectView(btn.dataset.view!);
   });
 });
@@ -209,15 +273,43 @@ function onUrlChange(url: string) {
   genBtn.disabled = !name;
   // hydrateIcons() prepended an <svg>, so the trailing text node is the label.
   genBtn.lastChild!.textContent = name ? ` ${name}.${langSel.value}` : " 生成";
+  // keep the toolbar site switcher in sync with where the tab actually is
+  try {
+    const problems = new URL(url).hostname.endsWith("kenkoooo.com");
+    siteSel.selectedIndex = problems ? 1 : 0;
+  } catch {
+    /* empty / invalid url */
+  }
 }
 
 listen<string>("browser:nav", (e) => onUrlChange(e.payload));
 listen<string>("browser:blocked", () =>
   toast("AtCoder / AtCoder Problems 以外のページは開けません"),
 );
+// Compare the OS-reported webview bounds with the placeholder rect and
+// re-apply on drift — self-heals the dark-gap / covered-nav-bar states.
+async function healBounds() {
+  if (!groups.browserShown) return;
+  const r = browserView.getBoundingClientRect();
+  if (r.width < 2 || r.height < 2) return;
+  try {
+    const [x, y, w, h] = await invoke<[number, number, number, number]>("get_browser_bounds");
+    const drifted =
+      Math.abs(x - r.x) > 1.5 ||
+      Math.abs(y - r.y) > 1.5 ||
+      Math.abs(w - r.width) > 1.5 ||
+      Math.abs(h - r.height) > 1.5;
+    if (drifted) reportBounds();
+  } catch {
+    reportBounds();
+  }
+}
+
 // AtCoder Problems is an SPA, so history-API navigations don't fire page-load
-// events — poll the URL as a fallback.
+// events — poll the URL as a fallback. The same tick verifies the native
+// webview's bounds.
 setInterval(async () => {
+  healBounds();
   try {
     const url = await invoke<string>("get_browser_url");
     if (url !== currentUrl) onUrlChange(url);
@@ -235,11 +327,21 @@ document.querySelectorAll<HTMLButtonElement>("#browser-bar .quick").forEach((b) 
   ),
 );
 
+$("btn-browser").addEventListener("click", () => groups.openBrowser());
+
+const siteSel = $<HTMLSelectElement>("site-select");
+siteSel.addEventListener("change", () => {
+  groups.openBrowser();
+  invoke("browser_navigate", { url: siteSel.value }).catch((e) => toast(String(e)));
+});
+
 genBtn.addEventListener("click", async () => {
   try {
+    const template = langSel.value === "py" ? settings.pyTemplate : settings.cppTemplate;
     const res = await invoke<CreatedFile>("create_problem_file", {
       url: currentUrl,
       lang: langSel.value,
+      template: template || null,
     });
     groups.openFile(res.path, res.name, res.content);
     toast(res.created ? `${res.name} を作成しました` : `${res.name}（既存）を開きました`);
@@ -286,13 +388,16 @@ function renderOutput(fileName: string, res: CompileResult) {
 async function compile() {
   const doc = groups.activeDoc();
   if (!doc) {
-    toast("先にファイルを開いてください（右上の「生成」やエクスプローラーから）");
+    toast("先にファイルを開いてください（「生成」やエクスプローラーから）");
     return;
   }
   try {
     await saveDoc(doc);
     setStatus("コンパイル中…");
-    const res = await invoke<CompileResult>("compile_file", { path: doc.path });
+    const res = await invoke<CompileResult>("compile_file", {
+      path: doc.path,
+      flags: doc.name.endsWith(".cpp") ? cppFlags() : null,
+    });
     lastRunCmd = res.run_cmd;
     renderOutput(doc.name, res);
     showPanel("output");
@@ -377,7 +482,7 @@ function openModal(
   modalEl.classList.toggle("wide", !!opts.wide);
   backdrop.classList.remove("hidden");
   modalCleanup = opts.onClose ?? null;
-  hideBrowser();
+  hideBrowserForDrag();
 }
 
 function closeModal() {
@@ -385,13 +490,102 @@ function closeModal() {
   modalBody.replaceChildren();
   modalCleanup?.();
   modalCleanup = null;
-  showBrowser();
+  restoreBrowserAfterDrag();
 }
 
 $("modal-close").addEventListener("click", closeModal);
 backdrop.addEventListener("click", (e) => {
   if (e.target === backdrop) closeModal();
 });
+
+/* ---------- settings modal ---------- */
+
+function openSettings() {
+  const wrap = document.createElement("div");
+  wrap.className = "settings-form";
+  wrap.innerHTML = `
+    <fieldset>
+      <legend>エディタ</legend>
+      <div class="settings-row">
+        <label for="set-editor-font">フォントサイズ</label>
+        <input id="set-editor-font" type="number" min="10" max="28" value="${settings.editorFontSize}" />
+      </div>
+      <div class="settings-row">
+        <label for="set-minimap">ミニマップを表示</label>
+        <input id="set-minimap" type="checkbox" ${settings.minimap ? "checked" : ""} />
+      </div>
+      <div class="settings-row">
+        <label for="set-term-font">ターミナルのフォントサイズ</label>
+        <input id="set-term-font" type="number" min="10" max="24" value="${settings.termFontSize}" />
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>C++ コンパイル</legend>
+      <div class="settings-row">
+        <label for="set-cpp-std">標準規格</label>
+        <select id="set-cpp-std">
+          ${["gnu++17", "gnu++20", "gnu++23"]
+            .map((s) => `<option value="${s}" ${s === settings.cppStd ? "selected" : ""}>${s}</option>`)
+            .join("")}
+        </select>
+      </div>
+      <div class="settings-row">
+        <label for="set-cpp-opt">最適化</label>
+        <select id="set-cpp-opt">
+          ${["-O2", "-O0 -g", "-O3"]
+            .map((s) => `<option value="${s}" ${s === settings.cppOpt ? "selected" : ""}>${s}</option>`)
+            .join("")}
+        </select>
+      </div>
+      <div class="settings-row">
+        <label for="set-cpp-extra">追加フラグ</label>
+        <input id="set-cpp-extra" type="text" placeholder="-fsanitize=undefined など" value="${settings.cppExtra}" />
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>生成テンプレート（空欄で既定のテンプレート）</legend>
+      <div class="settings-row"><label>C++</label></div>
+      <textarea id="set-cpp-tpl" spellcheck="false" placeholder="#include <bits/stdc++.h> …">${settings.cppTemplate}</textarea>
+      <div class="settings-row"><label>Python</label></div>
+      <textarea id="set-py-tpl" spellcheck="false" placeholder="import sys …">${settings.pyTemplate}</textarea>
+    </fieldset>
+    <div class="settings-actions">
+      <button id="set-reset">既定に戻す</button>
+      <button id="set-save" class="accent">保存</button>
+    </div>
+  `;
+
+  wrap.querySelector("#set-reset")!.addEventListener("click", () => {
+    settings = { ...DEFAULT_SETTINGS };
+    localStorage.setItem("atcode.settings", JSON.stringify(settings));
+    applySettings();
+    closeModal();
+    toast("設定を既定に戻しました");
+  });
+  wrap.querySelector("#set-save")!.addEventListener("click", () => {
+    const num = (id: string, fallback: number) => {
+      const v = Number((wrap.querySelector(`#${id}`) as HTMLInputElement).value);
+      return Number.isFinite(v) && v > 0 ? v : fallback;
+    };
+    const val = (id: string) => (wrap.querySelector(`#${id}`) as HTMLInputElement).value;
+    settings = {
+      editorFontSize: num("set-editor-font", DEFAULT_SETTINGS.editorFontSize),
+      minimap: (wrap.querySelector("#set-minimap") as HTMLInputElement).checked,
+      termFontSize: num("set-term-font", DEFAULT_SETTINGS.termFontSize),
+      cppStd: val("set-cpp-std"),
+      cppOpt: val("set-cpp-opt"),
+      cppExtra: val("set-cpp-extra").trim(),
+      cppTemplate: (wrap.querySelector("#set-cpp-tpl") as HTMLTextAreaElement).value,
+      pyTemplate: (wrap.querySelector("#set-py-tpl") as HTMLTextAreaElement).value,
+    };
+    localStorage.setItem("atcode.settings", JSON.stringify(settings));
+    applySettings();
+    closeModal();
+    toast("設定を保存しました");
+  });
+
+  openModal("設定", wrap);
+}
 
 /* ---------- env setup modal ---------- */
 
@@ -508,10 +702,41 @@ $("btn-diff").addEventListener("click", async () => {
 
 /* ---------- boot ---------- */
 
+/* ---------- session restore ---------- */
+
+let layoutTimer: ReturnType<typeof setTimeout> | undefined;
+groups.onLayoutChange = () => {
+  clearTimeout(layoutTimer);
+  layoutTimer = setTimeout(() => {
+    localStorage.setItem("atcode.layout", JSON.stringify(groups.serialize()));
+  }, 300);
+  requestAnimationFrame(reportBounds);
+};
+
+/* ---------- boot ---------- */
+
 (async () => {
   const savedLang = localStorage.getItem("atcode.lang");
   if (savedLang) langSel.value = savedLang;
+  applySettings();
   onUrlChange("");
+
+  // Reopen the tabs from the previous session; fall back to the AtCoder tab.
+  let restored = false;
+  try {
+    const layout = JSON.parse(localStorage.getItem("atcode.layout") ?? "null");
+    restored = await groups.restore(layout, async (path) => {
+      try {
+        return await invoke<string>("read_file", { path });
+      } catch {
+        return null;
+      }
+    });
+  } catch {
+    /* corrupt layout — start fresh */
+  }
+  if (!restored) groups.openBrowser();
+
   try {
     wsDir = await invoke<string>("workspace_dir");
     statusWs.textContent = wsDir;
