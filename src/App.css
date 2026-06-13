@@ -1194,6 +1194,10 @@
     grid-template-columns: 44px var(--sidebar-width, 220px) 6px minmax(300px, 1fr) 6px var(--web-width, 420px);
   }
 
+  .workbench.web-left {
+    grid-template-columns: 44px var(--sidebar-width, 220px) 6px var(--web-width, 420px) 6px minmax(300px, 1fr);
+  }
+
   .activitybar button {
     width: 44px;
   }

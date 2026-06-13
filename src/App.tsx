@@ -989,6 +989,47 @@ function App() {
     setDiffOpen(false)
   }
 
+  function renderOpenFileEntry() {
+    if (filePath) {
+      return (
+        <button className="open-editor-row" type="button" onClick={closeCurrentFile} title="ファイルを閉じる">
+          <X size={15} />
+          <FileCode2 size={15} />
+          <span className="open-editor-name">{explorerFileName}</span>
+          {explorerFilePathText && <span className="open-editor-path">{explorerFilePathText}</span>}
+        </button>
+      )
+    }
+
+    return (
+      <button className="open-editor-row muted" type="button" onClick={chooseWorkspaceFolder}>
+        <FolderOpen size={15} />
+        <span className="open-editor-name">フォルダ未選択</span>
+      </button>
+    )
+  }
+
+  function renderOpenWebEntry() {
+    if (webHidden) {
+      return (
+        <button className="open-editor-row muted" type="button" onClick={toggleWebPane} title="Webを表示">
+          <Globe2 size={15} />
+          <span className="open-editor-name">ブラウザー</span>
+          <span className="open-editor-path">hide</span>
+        </button>
+      )
+    }
+
+    return (
+      <button className="open-editor-row active" type="button" onClick={toggleWebPane} title="Webを隠す">
+        <X size={15} />
+        <Globe2 size={15} />
+        <span className="open-editor-name">ブラウザー</span>
+        <span className="open-editor-path">{webTargets[webTarget].label}</span>
+      </button>
+    )
+  }
+
   function toggleWebPane() {
     setWebWidth((current) => {
       if (current <= 0) return lastWebWidthRef.current || initialWebPaneWidth()
@@ -1164,35 +1205,10 @@ function App() {
 
         <aside className="explorer-panel" aria-label="Explorer">
           <section className="open-editors" aria-label="Open editors">
-            <div className="open-editor-group">left</div>
-            {filePath ? (
-              <button className="open-editor-row" type="button" onClick={closeCurrentFile} title="ファイルを閉じる">
-                <X size={15} />
-                <FileCode2 size={15} />
-                <span className="open-editor-name">{explorerFileName}</span>
-                {explorerFilePathText && <span className="open-editor-path">{explorerFilePathText}</span>}
-              </button>
-            ) : (
-              <button className="open-editor-row muted" type="button" onClick={chooseWorkspaceFolder}>
-                <FolderOpen size={15} />
-                <span className="open-editor-name">フォルダ未選択</span>
-              </button>
-            )}
-            <div className="open-editor-group">right{webHidden ? ' hide' : ''}</div>
-            {webHidden ? (
-              <button className="open-editor-row muted" type="button" onClick={toggleWebPane} title="Webを表示">
-                <Globe2 size={15} />
-                <span className="open-editor-name">ブラウザー</span>
-                <span className="open-editor-path">hide</span>
-              </button>
-            ) : (
-              <button className="open-editor-row active" type="button" onClick={toggleWebPane} title="Webを隠す">
-                <X size={15} />
-                <Globe2 size={15} />
-                <span className="open-editor-name">ブラウザー</span>
-                <span className="open-editor-path">{webTargets[webTarget].label}</span>
-              </button>
-            )}
+            <div className="open-editor-group">left{webSide === 'left' && webHidden ? ' hide' : ''}</div>
+            {webSide === 'left' ? renderOpenWebEntry() : renderOpenFileEntry()}
+            <div className="open-editor-group">right{webSide === 'right' && webHidden ? ' hide' : ''}</div>
+            {webSide === 'left' ? renderOpenFileEntry() : renderOpenWebEntry()}
           </section>
           {sidePanelMode === 'explorer' && (
             <>
@@ -1316,6 +1332,7 @@ function App() {
                 onClick={() => {
                   setSidebarWidth(248)
                   setWebWidth(initialWebPaneWidth())
+                  setWebSide('right')
                 }}
               >
                 <RefreshCw size={15} />
