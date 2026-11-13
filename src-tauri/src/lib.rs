@@ -174,6 +174,13 @@ fn get_environment_plan() -> EnvironmentPlan {
           install: "winget install -e --id Rustlang.Rustup".to_string(),
           verify: "rustc --version".to_string(),
         },
+        SetupCommand {
+          label: "AtCoder submit CLI".to_string(),
+          command: "py -3 -m pip install --user online-judge-tools && npm install -g atcoder-cli".to_string(),
+          check: "Get-Command oj -ErrorAction SilentlyContinue".to_string(),
+          install: "py -3 -m pip install --user online-judge-tools; npm install -g atcoder-cli".to_string(),
+          verify: "oj --version".to_string(),
+        },
       ],
       notes: vec![
         "MSYS2 の UCRT64 shell で g++ に PATH を通すと AtCoder の C++ 環境に近づきます。"
@@ -214,6 +221,13 @@ fn get_environment_plan() -> EnvironmentPlan {
           install: "brew install rustup && rustup-init".to_string(),
           verify: "rustc --version".to_string(),
         },
+        SetupCommand {
+          label: "AtCoder submit CLI".to_string(),
+          command: "python3 -m pip install --user online-judge-tools && npm install -g atcoder-cli".to_string(),
+          check: "command -v oj".to_string(),
+          install: "python3 -m pip install --user online-judge-tools && npm install -g atcoder-cli".to_string(),
+          verify: "oj --version".to_string(),
+        },
       ],
       notes: vec![
         "AtCoder の C++ は g++ を前提にすると差異が少なくなります。".to_string(),
@@ -252,6 +266,13 @@ fn get_environment_plan() -> EnvironmentPlan {
                     install: "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
                         .to_string(),
                     verify: "rustc --version".to_string(),
+                },
+                SetupCommand {
+                    label: "AtCoder submit CLI".to_string(),
+                    command: "python3 -m pip install --user online-judge-tools && npm install -g atcoder-cli".to_string(),
+                    check: "command -v oj".to_string(),
+                    install: "python3 -m pip install --user online-judge-tools && npm install -g atcoder-cli".to_string(),
+                    verify: "oj --version".to_string(),
                 },
             ],
             notes: vec![
@@ -388,6 +409,32 @@ fn reveal_path(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    if !allowed_atcoder_url(&url) {
+        return Err("AtCoder or Problems URL is required.".to_string());
+    }
+
+    let parsed = tauri::Url::parse(&url).map_err(|err| err.to_string())?;
+    let status = if cfg!(target_os = "macos") {
+        Command::new("open").arg(parsed.as_str()).status()
+    } else if cfg!(target_os = "windows") {
+        Command::new("rundll32")
+            .arg("url.dll,FileProtocolHandler")
+            .arg(parsed.as_str())
+            .status()
+    } else {
+        Command::new("xdg-open").arg(parsed.as_str()).status()
+    }
+    .map_err(|err| err.to_string())?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to open URL in the default browser.".to_string())
+    }
+}
+
+#[tauri::command]
 fn open_contest_webview(
     app: tauri::AppHandle,
     window: tauri::Window,
@@ -428,17 +475,24 @@ fn open_contest_webview(
     let app_for_navigation = app.clone();
     let new_window_label = label.clone();
     let navigation_tab_id = request.tab_id.clone();
+    let new_window_tab_id = request.tab_id.clone();
     let builder = WebviewBuilder::new(&label, WebviewUrl::External(url))
         .devtools(false)
         .zoom_hotkeys_enabled(false)
         .on_navigation(move |url| {
-            let allowed = allowed_atcoder_url(url.as_str());
-            if allowed {
+            let url_text = url.as_str().to_string();
+            if external_oauth_url(&url_text) {
+                let _ = block_external_auth_url(&app_for_navigation, &navigation_tab_id, &url_text);
+                return false;
+            }
+
+            let allowed = allowed_webview_navigation_url(&url_text);
+            if allowed && tracked_webview_url(&url_text) {
                 let _ = app_for_navigation.emit(
                     "contest-webview-url",
                     WebviewUrlEvent {
                         tab_id: navigation_tab_id.clone(),
-                        url: url.as_str().to_string(),
+                        url: url_text,
                     },
                 );
             }
@@ -446,7 +500,9 @@ fn open_contest_webview(
         })
         .on_new_window(move |url, _features| {
             let url_text = url.as_str().to_string();
-            if allowed_atcoder_url(&url_text) {
+            if external_oauth_url(&url_text) {
+                let _ = block_external_auth_url(&app_for_new_window, &new_window_tab_id, &url_text);
+            } else if allowed_webview_navigation_url(&url_text) {
                 if let Some(webview) = app_for_new_window.get_webview(&new_window_label) {
                     let _ = webview.navigate(url);
                 }
@@ -556,6 +612,14 @@ fn contest_webview_label(tab_id: &str) -> String {
 struct WebviewUrlEvent {
     tab_id: String,
     url: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExternalAuthEvent {
+    tab_id: String,
+    url: String,
+    host: String,
 }
 
 #[tauri::command]
@@ -752,8 +816,11 @@ fn terminal_start(
         .map_err(|err| err.to_string())?;
 
     let shell = default_shell();
+    let prompt = terminal_prompt(&shell);
     let mut command = CommandBuilder::new(shell);
     command.cwd(cwd);
+    command.env("PS1", prompt);
+    command.env("PROMPT", prompt);
     let child = pair
         .slave
         .spawn_command(command)
@@ -1292,6 +1359,16 @@ fn default_shell() -> String {
     }
 }
 
+fn terminal_prompt(shell: &str) -> &'static str {
+    if cfg!(target_os = "windows") {
+        "$PWD> "
+    } else if shell.ends_with("zsh") {
+        "%n@%m %~ %# "
+    } else {
+        "\\u@\\h \\w \\$ "
+    }
+}
+
 fn allowed_atcoder_url(value: &str) -> bool {
     let lower = value.trim().to_ascii_lowercase();
     lower == "https://atcoder.jp"
@@ -1302,10 +1379,63 @@ fn allowed_atcoder_url(value: &str) -> bool {
         || lower.starts_with("https://www.atcoder-problems.com/")
         || lower == "https://kenkoooo.com/atcoder"
         || lower.starts_with("https://kenkoooo.com/atcoder/")
-        || allowed_auth_url(&lower)
+        || allowed_github_auth_url(&lower)
 }
 
-fn allowed_auth_url(lower: &str) -> bool {
+fn allowed_webview_navigation_url(value: &str) -> bool {
+    allowed_internal_webview_url(value)
+        || allowed_atcoder_url(value)
+        || allowed_atcoder_login_challenge_url(value)
+}
+
+fn tracked_webview_url(value: &str) -> bool {
+    allowed_atcoder_url(value)
+}
+
+fn allowed_internal_webview_url(value: &str) -> bool {
+    let lower = value.trim().to_ascii_lowercase();
+    lower == "about:blank" || lower.starts_with("data:") || lower.starts_with("blob:")
+}
+
+fn allowed_atcoder_login_challenge_url(value: &str) -> bool {
+    let Ok(url) = tauri::Url::parse(value.trim()) else {
+        return false;
+    };
+    if url.scheme() != "https" {
+        return false;
+    }
+    matches!(
+        url.host_str(),
+        Some("challenges.cloudflare.com" | "static.cloudflareinsights.com")
+    )
+}
+
+fn external_oauth_url(value: &str) -> bool {
+    if allowed_webview_navigation_url(value) {
+        return false;
+    }
+
+    let Ok(url) = tauri::Url::parse(value.trim()) else {
+        return false;
+    };
+    if url.scheme() != "https" {
+        return false;
+    }
+
+    let Some(host) = url.host_str().map(|host| host.to_ascii_lowercase()) else {
+        return false;
+    };
+    let path = url.path().to_ascii_lowercase();
+
+    matches!(
+        host.as_str(),
+        "accounts.google.com" | "oauth2.googleapis.com"
+    ) || path.contains("/oauth")
+        || path.contains("/authorize")
+        || path.contains("/login/oauth")
+}
+
+fn allowed_github_auth_url(lower: &str) -> bool {
     let Some(path_start) = lower
         .strip_prefix("https://github.com")
         .or_else(|| lower.strip_prefix("https://www.github.com"))
@@ -1323,6 +1453,23 @@ fn allowed_auth_url(lower: &str) -> bool {
         || path_start.starts_with("/account_verifications")
         || path_start.starts_with("/webauthn")
         || path_start.starts_with("/u2f")
+        || path_start.starts_with("/sessions/verified-device")
+        || path_start.starts_with("/sessions/two-factor")
+        || path_start.starts_with("/sessions/passkey")
+}
+
+fn block_external_auth_url(app: &tauri::AppHandle, tab_id: &str, url: &str) -> Result<(), String> {
+    let parsed = tauri::Url::parse(url).map_err(|err| err.to_string())?;
+    let host = parsed.host_str().unwrap_or("external login").to_string();
+    app.emit(
+        "contest-webview-external-auth",
+        ExternalAuthEvent {
+            tab_id: tab_id.to_string(),
+            url: url.to_string(),
+            host,
+        },
+    )
+    .map_err(|err| err.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1350,6 +1497,7 @@ pub fn run() {
             delete_path,
             rename_path,
             reveal_path,
+            open_external_url,
             open_contest_webview,
             set_contest_webview_bounds,
             close_contest_webview,

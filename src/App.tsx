@@ -14,7 +14,11 @@ import {
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog'
-import Editor, { type BeforeMount, type OnMount } from '@monaco-editor/react'
+import Editor, { loader, type BeforeMount, type OnMount } from '@monaco-editor/react'
+import * as monacoEditor from 'monaco-editor/esm/vs/editor/editor.api.js'
+import 'monaco-editor/esm/vs/basic-languages/cpp/cpp.contribution.js'
+import 'monaco-editor/esm/vs/basic-languages/python/python.contribution.js'
+import 'monaco-editor/esm/vs/basic-languages/rust/rust.contribution.js'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import {
@@ -47,12 +51,15 @@ import {
   RefreshCw,
   RotateCw,
   Search,
+  Send,
   Settings,
   SquareTerminal,
   X,
 } from 'lucide-react'
 import '@xterm/xterm/css/xterm.css'
 import './App.css'
+
+loader.config({ monaco: monacoEditor })
 
 type Language = 'cpp' | 'python' | 'rust'
 type WebTarget = 'atcoder' | 'problems'
@@ -137,6 +144,18 @@ type ContestWebviewRequest = {
 type WebviewUrlEvent = {
   tabId: string
   url: string
+}
+
+type ExternalAuthEvent = {
+  tabId: string
+  url: string
+  host: string
+}
+
+type WebNotice = {
+  message: string
+  actionLabel?: string
+  action?: () => void
 }
 
 type TerminalOutputEvent = {
@@ -353,7 +372,7 @@ function isAllowedContestUrl(value: string) {
       return true
     }
     if (url.hostname === 'github.com' || url.hostname === 'www.github.com') {
-      return isAllowedAuthPath(url.pathname)
+      return isAllowedGithubAuthPath(url.pathname)
     }
     return url.hostname === 'kenkoooo.com' && url.pathname.startsWith('/atcoder')
   } catch {
@@ -361,10 +380,12 @@ function isAllowedContestUrl(value: string) {
   }
 }
 
-function isAllowedAuthPath(pathname: string) {
+function isAllowedGithubAuthPath(pathname: string) {
   return (
     pathname === '/login' ||
     pathname === '/session' ||
+    pathname.startsWith('/login?') ||
+    pathname.startsWith('/session?') ||
     pathname.startsWith('/sessions') ||
     pathname.startsWith('/login/oauth') ||
     pathname.startsWith('/password_reset') ||
@@ -378,13 +399,29 @@ function targetFromWebUrl(value: string): WebTarget {
   try {
     const url = new URL(normalizeWebUrl(value))
     if (url.hostname === 'kenkoooo.com' || url.hostname.includes('atcoder-problems.com')) return 'problems'
+    if (url.hostname === 'github.com' || url.hostname === 'www.github.com') return 'problems'
   } catch {
     return 'atcoder'
   }
   return 'atcoder'
 }
 
+function isAtCoderLoginUrl(value: string) {
+  try {
+    const url = new URL(normalizeWebUrl(value))
+    if (!['atcoder.jp', 'www.atcoder.jp'].includes(url.hostname)) return false
+    return url.pathname === '/login' || url.pathname.startsWith('/login/')
+  } catch {
+    return false
+  }
+}
+
 function taskFromAtcoderUrl(value: string): TaskFromUrl | null {
+  const genericTaskMatch = value.toLowerCase().match(/\b((?:abc|arc|agc|ahc)\d{3,4})_([a-z][a-z0-9]*)\b/)
+  if (genericTaskMatch) {
+    return { contest: genericTaskMatch[1], problem: genericTaskMatch[2] }
+  }
+
   try {
     const url = new URL(normalizeWebUrl(value))
     const atcoderMatch = url.pathname.match(/^\/contests\/([^/]+)\/tasks\/([^/]+)/)
@@ -398,10 +435,6 @@ function taskFromAtcoderUrl(value: string): TaskFromUrl | null {
       return taskFromTaskId(contest, taskScreenName)
     }
 
-    const genericTaskMatch = value.toLowerCase().match(/\b((?:abc|arc|agc|ahc)\d{3,4})_([a-z][a-z0-9]*)\b/)
-    if (genericTaskMatch) {
-      return { contest: genericTaskMatch[1], problem: genericTaskMatch[2] }
-    }
   } catch {
     return null
   }
@@ -730,6 +763,7 @@ function App() {
   const [webTabMenu, setWebTabMenu] = useState<{ x: number; y: number } | null>(null)
   const [explorerContextMenu, setExplorerContextMenu] = useState<ExplorerContextMenu | null>(null)
   const [webError, setWebError] = useState('')
+  const [webNotice, setWebNotice] = useState<WebNotice | null>(null)
   const [webSide, setWebSide] = useState<WebSide>('right')
   const [activePaneItems, setActivePaneItems] = useState<Record<WebSide, string>>({
     left: '',
@@ -1038,7 +1072,7 @@ function App() {
     const element = webFrameRef.current
     if (!element) return null
     const rect = element.getBoundingClientRect()
-    const statusbarHeight = 24
+    const statusbarHeight = 18
     const bottomLimit = terminalOpen
       ? window.innerHeight - statusbarHeight - terminalHeight
       : window.innerHeight - statusbarHeight
@@ -1056,6 +1090,39 @@ function App() {
     }
   }, [activeWebVisible, terminalHeight, terminalOpen, webWidth])
 
+  const syncActiveWebviewBounds = useCallback(() => {
+    if (!isTauri()) return
+    const rect = getWebviewRect()
+    if (!rect) return
+    const request: ContestWebviewRequest = {
+      ...rect,
+      tabId: activeWebTabIdRef.current,
+      url: webUrlRef.current,
+      navigate: false,
+    }
+    void callBackend<void>('set_contest_webview_bounds', { request }).catch(() => undefined)
+  }, [getWebviewRect])
+
+  const syncActiveWebviewBoundsForFrames = useCallback((frames = 8) => {
+    if (!isTauri()) return () => undefined
+    let frameId = 0
+    let remaining = frames
+    let cancelled = false
+
+    const tick = () => {
+      if (cancelled || remaining <= 0) return
+      syncActiveWebviewBounds()
+      remaining -= 1
+      frameId = window.requestAnimationFrame(tick)
+    }
+
+    frameId = window.requestAnimationFrame(tick)
+    return () => {
+      cancelled = true
+      if (frameId) window.cancelAnimationFrame(frameId)
+    }
+  }, [syncActiveWebviewBounds])
+
   useEffect(() => {
     callBackend<EnvironmentPlan>('get_environment_plan')
       .then(setEnvironmentPlan)
@@ -1065,7 +1132,8 @@ function App() {
   useEffect(() => {
     if (!isTauri()) return
 
-    let unlisten: (() => void) | undefined
+    let unlistenUrl: (() => void) | undefined
+    let unlistenExternalAuth: (() => void) | undefined
     void listen<WebviewUrlEvent>('contest-webview-url', (event) => {
       const { tabId, url: nextUrl } = event.payload
       if (!isAllowedContestUrl(nextUrl)) return
@@ -1081,12 +1149,36 @@ function App() {
         webUrlRef.current = nextUrl
       }
       setWebError('')
+      if (isAtCoderLoginUrl(nextUrl)) {
+        setWebNotice({
+          message: 'AtCoderログインはCloudflare検証で止まる場合があります。',
+          actionLabel: 'ブラウザで開く',
+          action: () => {
+            void callBackend<void>('open_external_url', { url: nextUrl }).catch((error) => {
+              setWebError(`ブラウザで開けませんでした: ${String(error)}`)
+            })
+          },
+        })
+      } else {
+        setWebNotice(null)
+      }
     }).then((cleanup) => {
-      unlisten = cleanup
+      unlistenUrl = cleanup
+    })
+
+    void listen<ExternalAuthEvent>('contest-webview-external-auth', (event) => {
+      const { tabId, host } = event.payload
+      if (tabId !== activeWebTabIdRef.current) return
+      setWebNotice({
+        message: `${host} のOAuthログインはアプリ内では使用できません。AtCoder Problems は GitHub ログインを試してください。`,
+      })
+    }).then((cleanup) => {
+      unlistenExternalAuth = cleanup
     })
 
     return () => {
-      unlisten?.()
+      unlistenUrl?.()
+      unlistenExternalAuth?.()
     }
   }, [])
 
@@ -1120,17 +1212,7 @@ function App() {
         }
         webviewUrlsRef.current.set(activeWebTabId, webUrl)
 
-        const updateBounds = () => {
-          const nextRect = getWebviewRect()
-          if (!nextRect) return
-          const boundsRequest: ContestWebviewRequest = {
-            ...nextRect,
-            tabId: activeWebTabIdRef.current,
-            url: webUrlRef.current,
-            navigate: false,
-          }
-          void callBackend<void>('set_contest_webview_bounds', { request: boundsRequest }).catch(() => undefined)
-        }
+        const updateBounds = () => syncActiveWebviewBounds()
 
         const resizeObserver = new ResizeObserver(updateBounds)
         if (webFrameRef.current) resizeObserver.observe(webFrameRef.current)
@@ -1150,7 +1232,7 @@ function App() {
       cancelled = true
       cleanupResize?.()
     }
-  }, [activeWebTabId, getWebviewRect, webSide, webUrl])
+  }, [activeWebTabId, getWebviewRect, syncActiveWebviewBounds, webSide, webUrl])
 
   useEffect(() => {
     if (!isTauri() || webWidth > 0) return
@@ -1161,6 +1243,11 @@ function App() {
     if (!isTauri() || activeWebVisible) return
     void callBackend<void>('hide_contest_webviews').catch(() => undefined)
   }, [activeWebVisible])
+
+  useEffect(() => {
+    if (!isTauri() || !activeWebVisible) return
+    return syncActiveWebviewBoundsForFrames(12)
+  }, [activeWebVisible, sidebarWidth, syncActiveWebviewBoundsForFrames, terminalHeight, terminalOpen, webSide, webWidth])
 
   useEffect(() => {
     if (!isTauri()) return
@@ -1244,7 +1331,8 @@ function App() {
         dragStart.current = null
         return
       }
-      setTerminalHeight(Math.min(420, Math.max(96, nextHeight)))
+      const maxTerminalHeight = Math.max(220, Math.floor(window.innerHeight * 0.85))
+      setTerminalHeight(Math.min(maxTerminalHeight, Math.max(96, nextHeight)))
     }
     const handleUp = () => {
       if (dragStart.current?.lastHeight && dragStart.current.lastHeight < 110) {
@@ -1326,6 +1414,7 @@ function App() {
     const handleUp = () => {
       layoutDragRef.current = null
       document.body.classList.remove('is-resizing-layout')
+      syncActiveWebviewBoundsForFrames(12)
     }
 
     const handleResize = () => {
@@ -1348,7 +1437,7 @@ function App() {
       window.removeEventListener('resize', handleResize)
       document.body.classList.remove('is-resizing-layout')
     }
-  }, [])
+  }, [syncActiveWebviewBoundsForFrames])
 
   async function createSolution() {
     setBusyLabel('creating')
@@ -1886,6 +1975,75 @@ ${result.stdout}`))
     }
   }
 
+  async function submitSolution() {
+    if (!filePath) {
+      appendTerminal('submit failed: ファイルを開いてください。')
+      setTerminalOpen(true)
+      return
+    }
+
+    const task = taskFromAtcoderUrl(webUrl) ?? taskFromAtcoderUrl(filePath) ?? taskFromAtcoderUrl(basename(filePath))
+    if (!task) {
+      appendTerminal('submit failed: 提出先の問題を検出できません。問題ページを開くか abc302_a.cpp のようなファイル名にしてください。')
+      setTerminalOpen(true)
+      return
+    }
+
+    const problemUrl = `https://atcoder.jp/contests/${task.contest}/tasks/${task.contest}_${task.problem}`
+    const sourceDir = parentDirectory(filePath)
+    const sourceName = basename(filePath)
+    const command = [
+      'oj',
+      'submit',
+      shellQuote(problemUrl),
+      shellQuote(sourceName),
+      ...ojSubmitLanguageArgs(language),
+      '--yes',
+      '--no-open',
+    ].join(' ')
+
+    if (
+      !window.confirm(
+        `AtCoderへ提出します。\n\n問題: ${task.contest}_${task.problem}\nファイル: ${sourceName}\n\n${command}`,
+      )
+    ) {
+      return
+    }
+
+    setTerminalOpen(true)
+    setTerminalCwdOverride(sourceDir)
+    setBusyLabel('submitting')
+    try {
+      await saveCurrentFile()
+      const checker = isWindowsHost()
+        ? 'where oj'
+        : 'command -v oj || find "$HOME/Library/Python" "$HOME/.local/bin" -name oj -type f 2>/dev/null | head -n 1'
+      const checkResult = await callBackend<CommandResult>('run_terminal_command', {
+        command: checker,
+        cwd: sourceDir,
+      })
+      const resolvedOj = checkResult.stdout.trim().split(/\r?\n/).find(Boolean)
+      if (checkResult.status !== 0 || !resolvedOj) {
+        appendTerminal('submit failed: oj が見つかりません。設定から AtCoder submit CLI を構築してください。')
+        setSidePanelMode('settings')
+        return
+      }
+      const resolvedCommand = command.replace(/^oj\b/, shellQuote(resolvedOj))
+      appendTerminal(`${sourceDir} ${isWindowsHost() ? '>' : '$'} ${resolvedCommand}`)
+      await writeTerminalInput(`${changeDirectoryCommand(sourceDir).trimEnd()}${commandJoiner()}${resolvedCommand}\r`)
+    } catch (error) {
+      appendTerminal(`submit failed: ${String(error)}`)
+    } finally {
+      setBusyLabel('')
+    }
+  }
+
+  function ojSubmitLanguageArgs(sourceLanguage: Language) {
+    if (sourceLanguage === 'cpp') return ['--guess-cxx-latest', '--guess-cxx-compiler', 'gcc']
+    if (sourceLanguage === 'python') return ['--guess-python-version', '3', '--guess-python-interpreter', 'pypy']
+    return []
+  }
+
   async function writeTerminalInput(data: string) {
     setTerminalOpen(true)
     if (!isTauri()) {
@@ -1955,15 +2113,17 @@ ${result.stdout}`))
 
   function setupCommandsForLanguage() {
     const commands = environmentPlan?.commands ?? []
+    const isSharedAtCoderTool = (item: EnvironmentPlan['commands'][number]) =>
+      item.label.toLowerCase().includes('atcoder')
     if (language === 'python') {
-      return commands.filter((item) => item.label.toLowerCase().includes('python'))
+      return commands.filter((item) => item.label.toLowerCase().includes('python') || isSharedAtCoderTool(item))
     }
     if (language === 'rust') {
-      return commands.filter((item) => item.label.toLowerCase().includes('rust'))
+      return commands.filter((item) => item.label.toLowerCase().includes('rust') || isSharedAtCoderTool(item))
     }
     return commands.filter((item) => {
       const label = item.label.toLowerCase()
-      return label.includes('c++') || label.includes('xcode')
+      return label.includes('c++') || label.includes('xcode') || isSharedAtCoderTool(item)
     })
   }
 
@@ -1980,9 +2140,26 @@ ${result.stdout}`))
     appendTerminal(`setup ${language} environment`)
     for (const item of commands) {
       for (const command of setupCommandsForStep(item)) {
-        appendTerminal(`$ ${command}`)
+        appendTerminal(`${terminalDisplayPrompt()} ${command}`)
         await writeTerminalInput(`${command}\r`)
       }
+    }
+  }
+
+  async function runSetupCommand(item: EnvironmentPlan['commands'][number]) {
+    const commands = setupCommandsForStep(item)
+    if (commands.length === 0) {
+      appendTerminal(`setup command not found: ${item.label}`)
+      setTerminalOpen(true)
+      return
+    }
+    const preview = commands.join('\n')
+    if (!window.confirm(`${item.label} を構築します。\n\n実行されるコマンド:\n${preview}`)) return
+    setTerminalOpen(true)
+    appendTerminal(`setup ${item.label}`)
+    for (const command of commands) {
+      appendTerminal(`${terminalDisplayPrompt()} ${command}`)
+      await writeTerminalInput(`${command}\r`)
     }
   }
 
@@ -2001,6 +2178,11 @@ ${result.stdout}`))
   function setupCommandForShell(command: string) {
     if (!isWindowsHost()) return command
     return command.replace(/\s+&&\s+/g, '; ')
+  }
+
+  function terminalDisplayPrompt() {
+    const cwd = terminalCwdRef.current || terminalWorkingDirectory
+    return `${cwd} ${isWindowsHost() ? '>' : '$'}`
   }
 
   async function terminateTerminal() {
@@ -2095,7 +2277,24 @@ ${result.stdout}`))
     const nextTarget = targetFromWebUrl(normalized)
     updateActiveWebTab({ url: normalized, draftUrl: normalized, target: nextTarget })
     webUrlRef.current = normalized
+    setAtCoderLoginNotice(normalized)
     webviewUrlsRef.current.delete(activeWebTabId)
+  }
+
+  function setAtCoderLoginNotice(url: string) {
+    if (!isAtCoderLoginUrl(url)) {
+      setWebNotice(null)
+      return
+    }
+    setWebNotice({
+      message: 'AtCoderログインはCloudflare検証で止まる場合があります。',
+      actionLabel: 'ブラウザで開く',
+      action: () => {
+        void callBackend<void>('open_external_url', { url }).catch((error) => {
+          setWebError(`ブラウザで開けませんでした: ${String(error)}`)
+        })
+      },
+    })
   }
 
   function refreshWebPane() {
@@ -2168,6 +2367,7 @@ ${result.stdout}`))
       lastSidebarWidthRef.current = current
       return 0
     })
+    syncActiveWebviewBoundsForFrames(12)
   }
 
   function toggleExplorerPanel() {
@@ -2189,6 +2389,7 @@ ${result.stdout}`))
   function showSidePanel(mode: SidePanelMode) {
     setSidePanelMode(mode)
     if (sidebarWidth <= 0) setSidebarWidth(lastSidebarWidthRef.current || 248)
+    syncActiveWebviewBoundsForFrames(12)
   }
 
   function closeFileTab(path = filePath) {
@@ -2755,6 +2956,10 @@ ${result.stdout}`))
             <Play size={20} fill="currentColor" />
             実行
           </button>
+          <button type="button" onClick={submitSolution} disabled={!filePath || busyLabel === 'submitting'}>
+            <Send size={18} />
+            提出
+          </button>
         </div>
         <div className="title-center">
           <select
@@ -2817,6 +3022,16 @@ ${result.stdout}`))
               <ExternalLink size={14} />
             </button>
           </div>
+          {(webNotice || webError) && (
+            <div className="title-web-notice" title={webNotice?.message ?? webError}>
+              <span>{webNotice?.message ?? webError}</span>
+              {webNotice?.action && webNotice.actionLabel && (
+                <button type="button" onClick={webNotice.action}>
+                  {webNotice.actionLabel}
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <div className="title-right">
           <button
@@ -3068,6 +3283,7 @@ ${result.stdout}`))
               environmentPlan={environmentPlan}
               language={language}
               onCopyCommand={copyCommand}
+              onRunSetupCommand={(command) => void runSetupCommand(command)}
               onRunLanguageSetup={() => void runLanguageSetup()}
               onToggleTerminal={() => setTerminalOpen((current) => !current)}
               onResetLayout={() => {
@@ -3177,7 +3393,7 @@ ${result.stdout}`))
       {terminalOpen && (
         <TerminalPanel
           height={terminalHeight}
-          left={48 + sidebarWidth + 6}
+          left={0}
           workingDirectory={terminalWorkingDirectory}
           terminalRef={terminalElementRef}
           onResizeStart={(event) => {

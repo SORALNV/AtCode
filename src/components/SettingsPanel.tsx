@@ -1,4 +1,4 @@
-import { Copy, History, RefreshCw, SquareTerminal } from 'lucide-react'
+import { Copy, History, Play, RefreshCw, SquareTerminal } from 'lucide-react'
 
 type Language = 'cpp' | 'python' | 'rust'
 
@@ -8,10 +8,13 @@ type EnvironmentPlan = {
   commands: Array<{ label: string; command: string; check?: string; install?: string; verify?: string }>
 }
 
+type SetupCommand = EnvironmentPlan['commands'][number]
+
 type SettingsPanelProps = {
   environmentPlan: EnvironmentPlan | null
   language: Language
   onCopyCommand: (command: string) => void
+  onRunSetupCommand: (command: SetupCommand) => void
   onRunLanguageSetup: () => void
   onToggleTerminal: () => void
   onResetLayout: () => void
@@ -22,6 +25,7 @@ export function SettingsPanel({
   environmentPlan,
   language,
   onCopyCommand,
+  onRunSetupCommand,
   onRunLanguageSetup,
   onToggleTerminal,
   onResetLayout,
@@ -44,10 +48,15 @@ export function SettingsPanel({
         </button>
         <div className="side-list">
           {environmentPlan?.commands.map((item) => (
-            <button key={item.command} className="side-list-row command-row" type="button" onClick={() => onCopyCommand(item.command)}>
-              <Copy size={14} />
-              <span>{item.label}</span>
-            </button>
+            <div key={item.command} className="side-list-row command-row">
+              <button className="command-run-button" type="button" onClick={() => onRunSetupCommand(item)}>
+                <Play size={13} />
+                <span>{item.label}</span>
+              </button>
+              <button className="command-copy-button" type="button" onClick={() => onCopyCommand(item.command)} title="コマンドをコピー">
+                <Copy size={13} />
+              </button>
+            </div>
           ))}
         </div>
       </div>

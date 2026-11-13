@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "jingoji-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8931", "-d", "/Users/sora/Code/神護寺_WEBサイト一式/リニューアル版"],
+      "port": 8931
+    }
+  ]
+}

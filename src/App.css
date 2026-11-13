@@ -1,8 +1,9 @@
 .ide-shell {
+  --statusbar-height: 18px;
   width: 100%;
   height: 100svh;
   display: grid;
-  grid-template-rows: 36px minmax(0, 1fr) 24px;
+  grid-template-rows: 36px minmax(0, 1fr) var(--statusbar-height);
   overflow: hidden;
   background: #181818;
   color: #d6d6d6;
@@ -214,6 +215,45 @@
 .title-url-bar button:hover {
   background: #333333;
   color: #ffffff;
+}
+
+.title-web-notice {
+  max-width: min(360px, 28vw);
+  height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 280px;
+  overflow: hidden;
+  border: 1px solid #6f4e1d;
+  border-radius: 4px;
+  padding: 0 8px;
+  background: #2c2315;
+  color: #f0c674;
+  font: 700 11px/24px var(--sans);
+  white-space: nowrap;
+}
+
+.title-web-notice span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.title-web-notice button {
+  height: 18px;
+  flex: 0 0 auto;
+  border: 1px solid #8f6a2a;
+  border-radius: 3px;
+  padding: 0 6px;
+  background: #3a2d19;
+  color: #ffd27a;
+  font: 800 10px/1 var(--sans);
+}
+
+.title-web-notice button:hover {
+  background: #4a3a21;
+  color: #fff0c7;
 }
 
 .workbench {
@@ -656,6 +696,46 @@
 
 .side-list-row {
   padding: 0 7px;
+}
+
+.side-list-row.command-row {
+  gap: 4px;
+  padding: 0 4px 0 0;
+}
+
+.command-run-button,
+.command-copy-button {
+  min-width: 0;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.command-run-button {
+  flex: 1 1 auto;
+  gap: 7px;
+  padding: 0 7px;
+  text-align: left;
+}
+
+.command-copy-button {
+  width: 28px;
+  flex: 0 0 28px;
+  justify-content: center;
+  padding: 0;
+  color: #9d9d9d;
+}
+
+.command-run-button:hover,
+.command-copy-button:hover {
+  background: #333333;
+  color: #ffffff;
 }
 
 .side-action-button {
@@ -1369,7 +1449,7 @@
   position: absolute;
   left: 296px;
   right: 0;
-  bottom: 24px;
+  bottom: var(--statusbar-height);
   z-index: 8;
   display: flex;
   flex-direction: column;
@@ -1451,18 +1531,22 @@
   min-height: 0;
   flex: 1;
   display: block;
+  overflow: hidden;
   background: #0c0f12;
 }
 
 .terminal-xterm {
+  box-sizing: border-box;
   width: 100%;
   height: 100%;
+  overflow: hidden;
   padding: 8px 10px;
   background: #0c0f12;
 }
 
 .terminal-xterm .xterm {
   height: 100%;
+  max-height: 100%;
 }
 
 .terminal-xterm .xterm-viewport,
@@ -1471,15 +1555,18 @@
 }
 
 .statusbar {
+  height: var(--statusbar-height);
   display: grid;
   grid-template-columns: minmax(120px, 1fr) auto minmax(160px, 1fr);
   align-items: center;
   gap: 12px;
-  padding: 0 12px;
+  padding: 0 10px;
   background: #0e639c;
   color: #ffffff;
-  font-size: 12px;
+  font-size: 10px;
+  line-height: var(--statusbar-height);
   font-weight: 600;
+  overflow: hidden;
 }
 
 .statusbar > span:first-child {
